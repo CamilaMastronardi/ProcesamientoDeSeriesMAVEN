@@ -1,0 +1,2 @@
+gap_count,files_with_gaps,dates_with_gaps,nominal_cadence_s,min_gap_s,median_gap_s,mean_gap_s,p75_gap_s,p90_gap_s,p95_gap_s,p99_gap_s,max_gap_s,total_gap_duration_s,total_gap_duration_h,estimated_missing_samples_total,median_missing_samples_per_gap,mean_missing_samples_per_gap,max_missing_samples_in_gap
+6171,370,370,1.0,1.501,6.499,70.9627705396208,14.5,30.499,40.5,442.89840000000146,41404.354,437911.257,121.64201583333333,429772,5.0,69.6438178577216,41403
