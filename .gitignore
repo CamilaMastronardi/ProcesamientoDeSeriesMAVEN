@@ -4,4 +4,4 @@ __pycache__/
 .ipynb_checkpoints/
 .env
 credentials*.json
-data/
+data/*:Zone.Identifier
