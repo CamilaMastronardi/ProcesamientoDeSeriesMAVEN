@@ -1,0 +1,8 @@
+metric,value
+selected_gaps,88.0
+valid_gaps,88.0
+provisional_candidates,20.0
+candidate_fraction_valid,0.22727272727272727
+provisional_max_gap_s,5.0
+provisional_max_relative_jump,0.25
+provisional_max_angle_deg,20.0
