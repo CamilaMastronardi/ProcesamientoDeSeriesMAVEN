@@ -1,0 +1,8 @@
+metric,value
+dates_requested,5.0
+dates_written,5.0
+approved_real_gaps,3378.0
+unfilled_real_gaps,5673.0
+synthetic_samples_prepared,3.0
+original_samples_written,415282.0
+interpolated_samples_written,3.0

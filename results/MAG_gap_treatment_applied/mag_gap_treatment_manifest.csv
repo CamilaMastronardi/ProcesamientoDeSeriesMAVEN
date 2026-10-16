@@ -1,0 +1,6 @@
+date_utc,status,original_samples,interpolated_samples,output_samples,output_file
+2014-10-11,written,73064,1,73065,data/processed/MAG_gap_treated/2014/10/mag_2014-10-11.parquet
+2014-10-12,written,84767,0,84767,data/processed/MAG_gap_treated/2014/10/mag_2014-10-12.parquet
+2014-10-13,written,85862,0,85862,data/processed/MAG_gap_treated/2014/10/mag_2014-10-13.parquet
+2014-10-14,written,86396,1,86397,data/processed/MAG_gap_treated/2014/10/mag_2014-10-14.parquet
+2014-10-15,written,85193,1,85194,data/processed/MAG_gap_treated/2014/10/mag_2014-10-15.parquet
