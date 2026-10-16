@@ -1,0 +1,11 @@
+source,variability_regime,interpolate,decision_reason,gap_count
+boundary,intermediate,False,intermediate_gap_too_long,294
+boundary,intermediate,True,intermediate_and_short_enough,593
+boundary,quiet,False,quiet_but_gap_too_long,22
+boundary,quiet,True,quiet_and_short_enough,1157
+boundary,variable,False,high_local_variability,817
+internal,intermediate,False,intermediate_gap_too_long,1254
+internal,intermediate,True,intermediate_and_short_enough,676
+internal,quiet,False,quiet_but_gap_too_long,950
+internal,quiet,True,quiet_and_short_enough,952
+internal,variable,False,high_local_variability,2336
