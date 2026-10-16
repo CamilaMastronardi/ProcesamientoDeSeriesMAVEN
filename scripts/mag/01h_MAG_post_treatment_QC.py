@@ -50,6 +50,7 @@ python3 scripts/mag/01h_MAG_post_treatment_QC.py
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -164,6 +165,27 @@ def load_manifest():
     return m.drop_duplicates(subset=["date_utc"], keep="last")
 
 
+
+def parquet_nominal_date(path):
+    match = re.fullmatch(r"mag_(\d{4}-\d{2}-\d{2})\.parquet", path.name)
+    if match is None:
+        raise ValueError(
+            f"Unexpected processed filename: {path}. Expected mag_YYYY-MM-DD.parquet"
+        )
+    return pd.Timestamp(match.group(1)).date()
+
+
+def get_processed_files():
+    files = list(DATA_DIR.rglob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No Parquet files found under {DATA_DIR}")
+    dated = [(parquet_nominal_date(path), path) for path in files]
+    dates = [date for date, _ in dated]
+    if len(dates) != len(set(dates)):
+        raise ValueError("Duplicate nominal UTC dates found in processed MAG files.")
+    dated.sort(key=lambda item: item[0])
+    return [path for _, path in dated]
+
 def load_day(path):
     df = pd.read_parquet(path)
     required = [
@@ -192,6 +214,16 @@ def load_day(path):
 
 
 def collect_gap_transitions(times, prev_time=None):
+    """
+    Detect temporal gaps without assuming a specific datetime storage unit.
+
+    Parquet can preserve datetime64[us, UTC] on days containing only original
+    BigQuery samples, while days containing synthetic samples can end up as
+    datetime64[ns, UTC]. DatetimeIndex.asi8 follows that underlying unit, so
+    mixing asi8 values with Timestamp.value (always ns) creates false dt values.
+
+    Timestamp/Timedelta arithmetic below is unit-aware.
+    """
     gaps = []
     duplicates = 0
     nonpositive = 0
@@ -200,11 +232,11 @@ def collect_gap_transitions(times, prev_time=None):
     if len(times) == 0:
         return gaps, duplicates, nonpositive
 
-    values = times.asi8
+    if prev_time is not None:
+        left = pd.Timestamp(prev_time)
+        right = pd.Timestamp(times[0])
+        dt_s = (right - left).total_seconds()
 
-    def inspect_pair(left_ns, right_ns, source):
-        nonlocal duplicates, nonpositive
-        dt_s = (right_ns - left_ns) / 1e9
         if dt_s == 0:
             duplicates += 1
         if dt_s <= 0:
@@ -212,30 +244,28 @@ def collect_gap_transitions(times, prev_time=None):
         if dt_s > GAP_THRESHOLD_S:
             gaps.append(
                 {
-                    "time_before": pd.Timestamp(left_ns, unit="ns", tz="UTC"),
-                    "time_after": pd.Timestamp(right_ns, unit="ns", tz="UTC"),
+                    "time_before": left,
+                    "time_after": right,
                     "dt_s": float(dt_s),
-                    "source": source,
+                    "source": "boundary",
                 }
             )
 
-    if prev_time is not None:
-        inspect_pair(ts_key(prev_time), int(values[0]), "boundary")
+    if len(times) >= 2:
+        delta = np.asarray(
+            (times[1:] - times[:-1]).total_seconds(),
+            dtype=float,
+        )
 
-    if len(values) >= 2:
-        delta = np.diff(values) / 1e9
         duplicates += int(np.sum(delta == 0))
         nonpositive += int(np.sum(delta <= 0))
+
         idx = np.flatnonzero(delta > GAP_THRESHOLD_S)
         for i in idx:
             gaps.append(
                 {
-                    "time_before": pd.Timestamp(
-                        int(values[i]), unit="ns", tz="UTC"
-                    ),
-                    "time_after": pd.Timestamp(
-                        int(values[i + 1]), unit="ns", tz="UTC"
-                    ),
+                    "time_before": pd.Timestamp(times[i]),
+                    "time_after": pd.Timestamp(times[i + 1]),
                     "dt_s": float(delta[i]),
                     "source": "internal",
                 }
@@ -252,6 +282,9 @@ def scan_files(files):
 
     prev_processed = None
     prev_raw = None
+    prev_processed_file = None
+    prev_raw_file = None
+    boundary_anomalies = []
 
     totals = {
         "processed_rows": 0,
@@ -271,12 +304,15 @@ def scan_files(files):
     }
 
     for n, path in enumerate(files, start=1):
+        nominal_date = parquet_nominal_date(path)
         df = load_day(path)
         if df.empty:
             continue
 
         valid_times = df["datetime_utc"].dropna()
         date_utc = valid_times.iloc[0].date() if len(valid_times) else None
+        actual_dates = df["datetime_utc"].dropna().dt.date
+        date_mismatch_rows = int((actual_dates != nominal_date).sum())
 
         totals["invalid_time_rows"] += int(df["datetime_utc"].isna().sum())
 
@@ -322,11 +358,40 @@ def scan_files(files):
             ]
             synthetic_parts.append(interpolated[keep].copy())
 
+        if len(valid_times) and prev_processed is not None:
+            current_first = valid_times.iloc[0]
+            boundary_dt_s = (current_first - prev_processed).total_seconds()
+            if boundary_dt_s <= 0:
+                boundary_anomalies.append({
+                    "sequence": "processed",
+                    "previous_file": str(prev_processed_file),
+                    "current_file": str(path),
+                    "previous_last_time": prev_processed,
+                    "current_first_time": current_first,
+                    "dt_s": boundary_dt_s,
+                    "current_nominal_date": nominal_date,
+                })
+
+        raw_times = original["datetime_utc"].dropna()
+        if len(raw_times) and prev_raw is not None:
+            current_raw_first = raw_times.iloc[0]
+            raw_boundary_dt_s = (current_raw_first - prev_raw).total_seconds()
+            if raw_boundary_dt_s <= 0:
+                boundary_anomalies.append({
+                    "sequence": "original_only",
+                    "previous_file": str(prev_raw_file),
+                    "current_file": str(path),
+                    "previous_last_time": prev_raw,
+                    "current_first_time": current_raw_first,
+                    "dt_s": raw_boundary_dt_s,
+                    "current_nominal_date": nominal_date,
+                })
+
         pg, pdup, pnonpos = collect_gap_transitions(
             valid_times, prev_time=prev_processed
         )
         rg, rdup, rnonpos = collect_gap_transitions(
-            original["datetime_utc"].dropna(), prev_time=prev_raw
+            raw_times, prev_time=prev_raw
         )
 
         processed_gaps.extend(pg)
@@ -338,8 +403,10 @@ def scan_files(files):
 
         if len(valid_times):
             prev_processed = valid_times.iloc[-1]
-        if len(original):
-            prev_raw = original["datetime_utc"].dropna().iloc[-1]
+            prev_processed_file = path
+        if len(raw_times):
+            prev_raw = raw_times.iloc[-1]
+            prev_raw_file = path
 
         totals["processed_rows"] += len(df)
         totals["original_rows"] += len(original)
@@ -348,7 +415,11 @@ def scan_files(files):
         daily_rows.append(
             {
                 "date_utc": date_utc,
+                "nominal_date": nominal_date,
                 "file": str(path),
+                "min_time": valid_times.iloc[0] if len(valid_times) else pd.NaT,
+                "max_time": valid_times.iloc[-1] if len(valid_times) else pd.NaT,
+                "date_mismatch_rows": date_mismatch_rows,
                 "rows": len(df),
                 "original_samples": len(original),
                 "interpolated_samples": len(interpolated),
@@ -375,6 +446,7 @@ def scan_files(files):
         pd.DataFrame(processed_gaps),
         synthetic,
         totals,
+        pd.DataFrame(boundary_anomalies),
     )
 
 
@@ -676,9 +748,7 @@ def main():
     expected_dates = load_expected_dates()
     manifest = load_manifest()
 
-    files = sorted(DATA_DIR.rglob("*.parquet"))
-    if not files:
-        raise FileNotFoundError(f"No Parquet files found under {DATA_DIR}")
+    files = get_processed_files()
 
     print()
     print(f"Policy gaps:     {len(policy):,}")
@@ -687,7 +757,14 @@ def main():
     print()
     print(f"Scanning {len(files):,} processed daily files...")
 
-    daily, raw_gaps, residual_gaps, synthetic, totals = scan_files(files)
+    (
+        daily,
+        raw_gaps,
+        residual_gaps,
+        synthetic,
+        totals,
+        boundary_anomalies,
+    ) = scan_files(files)
     daily = compare_manifest(daily, manifest)
 
     gap_checks = compare_gap_sets(policy, raw_gaps, residual_gaps)
@@ -732,6 +809,7 @@ def main():
         ),
         "no_processed_duplicate_timestamps": totals["processed_duplicate_timestamps"] == 0,
         "no_processed_nonpositive_dt": totals["processed_nonpositive_dt"] == 0,
+        "daily_file_dates_match_timestamps": int(daily["date_mismatch_rows"].sum()) == 0,
         "no_nonfinite_B_rows": totals["nonfinite_B_rows"] == 0,
         "no_invalid_times": totals["invalid_time_rows"] == 0,
         "flags_are_consistent": (
@@ -802,6 +880,23 @@ def main():
 
     summary.to_csv(OUTPUT_DIR / "mag_post_treatment_qc_summary.csv", index=False)
     daily.to_csv(OUTPUT_DIR / "mag_post_treatment_daily_qc.csv", index=False)
+    if boundary_anomalies.empty:
+        boundary_anomalies = pd.DataFrame(
+            columns=[
+                "sequence",
+                "previous_file",
+                "current_file",
+                "previous_last_time",
+                "current_first_time",
+                "dt_s",
+                "current_nominal_date",
+            ]
+        )
+
+    boundary_anomalies.to_csv(
+        OUTPUT_DIR / "mag_nonpositive_boundary_anomalies.csv",
+        index=False,
+    )
     raw_gaps.to_csv(
         OUTPUT_DIR / "mag_raw_gaps_from_processed_originals.csv", index=False
     )

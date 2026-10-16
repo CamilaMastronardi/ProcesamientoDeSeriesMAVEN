@@ -7,6 +7,16 @@ derived from the pseudo-gap experiment.
 
 This script DOES NOT modify the MAG time series.
 
+Timestamp parsing
+-----------------
+Gap timestamps are parsed with ``format="mixed"`` so ISO-8601 strings with
+and without fractional seconds are both preserved. For boundary events, if
+one endpoint is missing but the other endpoint and boundary duration are
+available, the missing endpoint is reconstructed from those two quantities.
+If both one endpoint and the stored duration were lost upstream, the nearest
+raw MAG timestamp is recovered from BigQuery and the duration is rebuilt from
+the final endpoint pair. Any remaining recovery failure is treated as an error.
+
 Policy
 ------
 Local variability is
@@ -239,11 +249,13 @@ def normalize_internal_gaps(
             "time_before": pd.to_datetime(
                 df[before_col],
                 utc=True,
+                format="mixed",
                 errors="coerce",
             ),
             "time_after": pd.to_datetime(
                 df[after_col],
                 utc=True,
+                format="mixed",
                 errors="coerce",
             ),
             "gap_duration_s": pd.to_numeric(
@@ -252,6 +264,24 @@ def normalize_internal_gaps(
             ),
         }
     )
+
+    bad_time = (
+        out["time_before"].isna()
+        | out["time_after"].isna()
+    )
+
+    if bad_time.any():
+        bad_rows = df.loc[
+            bad_time,
+            [before_col, after_col],
+        ]
+
+        raise ValueError(
+            "Internal gap timestamp parsing failed for "
+            f"{int(bad_time.sum())} row(s). "
+            "First problematic rows:\n"
+            f"{bad_rows.head(10).to_string(index=False)}"
+        )
 
     out["original_category"] = None
 
@@ -266,8 +296,111 @@ def normalize_internal_gaps(
     return out
 
 
+
+def query_nearest_boundary_timestamp(
+    client,
+    table_id,
+    time_col,
+    anchor_time,
+    direction,
+):
+    """
+    Recover the nearest raw MAG timestamp around a boundary from BigQuery.
+
+    Used only as a fallback when an upstream boundary CSV lost one endpoint
+    and also lost the stored boundary duration.
+    """
+    anchor_time = pd.Timestamp(anchor_time)
+
+    if anchor_time.tzinfo is None:
+        anchor_time = anchor_time.tz_localize("UTC")
+    else:
+        anchor_time = anchor_time.tz_convert("UTC")
+
+    window = pd.Timedelta(days=2)
+
+    if direction == "previous":
+        start_time = anchor_time - window
+        end_time = anchor_time
+        comparison = "<"
+        ordering = "DESC"
+    elif direction == "next":
+        start_time = anchor_time
+        end_time = anchor_time + window
+        comparison = ">"
+        ordering = "ASC"
+    else:
+        raise ValueError(
+            "direction must be 'previous' or 'next'"
+        )
+
+    query = f"""
+    SELECT
+        `{time_col}` AS time_utc
+    FROM `{table_id}`
+    WHERE
+        DATE(`{time_col}`) BETWEEN @start_date AND @end_date
+        AND `{time_col}` >= @start_time
+        AND `{time_col}` <= @end_time
+        AND `{time_col}` {comparison} @anchor_time
+    ORDER BY `{time_col}` {ordering}
+    LIMIT 1
+    """
+
+    config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter(
+                "start_date",
+                "DATE",
+                start_time.date(),
+            ),
+            bigquery.ScalarQueryParameter(
+                "end_date",
+                "DATE",
+                end_time.date(),
+            ),
+            bigquery.ScalarQueryParameter(
+                "start_time",
+                "TIMESTAMP",
+                start_time.to_pydatetime(),
+            ),
+            bigquery.ScalarQueryParameter(
+                "end_time",
+                "TIMESTAMP",
+                end_time.to_pydatetime(),
+            ),
+            bigquery.ScalarQueryParameter(
+                "anchor_time",
+                "TIMESTAMP",
+                anchor_time.to_pydatetime(),
+            ),
+        ]
+    )
+
+    result = (
+        client.query(
+            query,
+            job_config=config,
+        )
+        .to_dataframe()
+    )
+
+    if result.empty:
+        return pd.NaT
+
+    return pd.to_datetime(
+        result.iloc[0]["time_utc"],
+        utc=True,
+        format="mixed",
+        errors="coerce",
+    )
+
+
 def normalize_boundary_gaps(
     path,
+    client,
+    table_id,
+    schema,
 ):
     df = pd.read_csv(path)
 
@@ -318,11 +451,13 @@ def normalize_boundary_gaps(
             "time_before": pd.to_datetime(
                 df[before_col],
                 utc=True,
+                format="mixed",
                 errors="coerce",
             ),
             "time_after": pd.to_datetime(
                 df[after_col],
                 utc=True,
+                format="mixed",
                 errors="coerce",
             ),
             "gap_duration_s": pd.to_numeric(
@@ -330,6 +465,198 @@ def normalize_boundary_gaps(
                 errors="coerce",
             ),
         }
+    )
+
+    # -------------------------------------------------------------
+    # First recover from a valid stored duration, when possible.
+    # -------------------------------------------------------------
+    valid_duration = (
+        np.isfinite(
+            out["gap_duration_s"]
+        )
+        & (
+            out["gap_duration_s"]
+            > 0
+        )
+    )
+
+    recover_before_from_duration = (
+        out["time_before"].isna()
+        & out["time_after"].notna()
+        & valid_duration
+    )
+
+    if recover_before_from_duration.any():
+        out.loc[
+            recover_before_from_duration,
+            "time_before",
+        ] = (
+            out.loc[
+                recover_before_from_duration,
+                "time_after",
+            ]
+            - pd.to_timedelta(
+                out.loc[
+                    recover_before_from_duration,
+                    "gap_duration_s",
+                ],
+                unit="s",
+            )
+        )
+
+    recover_after_from_duration = (
+        out["time_after"].isna()
+        & out["time_before"].notna()
+        & valid_duration
+    )
+
+    if recover_after_from_duration.any():
+        out.loc[
+            recover_after_from_duration,
+            "time_after",
+        ] = (
+            out.loc[
+                recover_after_from_duration,
+                "time_before",
+            ]
+            + pd.to_timedelta(
+                out.loc[
+                    recover_after_from_duration,
+                    "gap_duration_s",
+                ],
+                unit="s",
+            )
+        )
+
+    recovered_from_duration = int(
+        recover_before_from_duration.sum()
+        + recover_after_from_duration.sum()
+    )
+
+    if recovered_from_duration:
+        print(
+            "Recovered boundary timestamp endpoint(s) "
+            f"from stored duration: {recovered_from_duration:,}"
+        )
+
+    # -------------------------------------------------------------
+    # If both one endpoint and the stored duration were lost upstream,
+    # recover the missing endpoint directly from raw MAG in BigQuery.
+    # -------------------------------------------------------------
+    recovered_from_bigquery = 0
+
+    incomplete_indices = out.index[
+        out["time_before"].isna()
+        | out["time_after"].isna()
+    ]
+
+    for index in incomplete_indices:
+        before = out.at[
+            index,
+            "time_before",
+        ]
+        after = out.at[
+            index,
+            "time_after",
+        ]
+
+        if pd.isna(before) and pd.notna(after):
+            recovered = query_nearest_boundary_timestamp(
+                client=client,
+                table_id=table_id,
+                time_col=schema["time"],
+                anchor_time=after,
+                direction="previous",
+            )
+
+            if pd.notna(recovered):
+                out.at[
+                    index,
+                    "time_before",
+                ] = recovered
+                recovered_from_bigquery += 1
+
+        elif pd.isna(after) and pd.notna(before):
+            recovered = query_nearest_boundary_timestamp(
+                client=client,
+                table_id=table_id,
+                time_col=schema["time"],
+                anchor_time=before,
+                direction="next",
+            )
+
+            if pd.notna(recovered):
+                out.at[
+                    index,
+                    "time_after",
+                ] = recovered
+                recovered_from_bigquery += 1
+
+    if recovered_from_bigquery:
+        print(
+            "Recovered boundary timestamp endpoint(s) "
+            f"from raw MAG BigQuery data: {recovered_from_bigquery:,}"
+        )
+
+    bad_time = (
+        out["time_before"].isna()
+        | out["time_after"].isna()
+    )
+
+    if bad_time.any():
+        bad_rows = df.loc[
+            bad_time,
+            [before_col, after_col, duration_col],
+        ]
+
+        raise ValueError(
+            "Boundary gap timestamp recovery failed for "
+            f"{int(bad_time.sum())} row(s). "
+            "First problematic rows:\n"
+            f"{bad_rows.head(10).to_string(index=False)}"
+        )
+
+    reconstructed_duration_s = (
+        out["time_after"]
+        - out["time_before"]
+    ).dt.total_seconds()
+
+    original_duration = (
+        out["gap_duration_s"].copy()
+    )
+
+    comparable = (
+        np.isfinite(
+            original_duration
+        )
+        & np.isfinite(
+            reconstructed_duration_s
+        )
+    )
+
+    duration_difference_s = np.abs(
+        reconstructed_duration_s
+        - original_duration
+    )
+
+    inconsistent_duration = (
+        comparable
+        & (
+            duration_difference_s
+            > 1e-6
+        )
+    )
+
+    if inconsistent_duration.any():
+        raise ValueError(
+            "Boundary timestamps and stored duration are inconsistent "
+            f"for {int(inconsistent_duration.sum())} row(s)."
+        )
+
+    # Reconstructed endpoints are authoritative if the stored duration
+    # was missing upstream.
+    out["gap_duration_s"] = (
+        reconstructed_duration_s
     )
 
     if category_col is not None:
@@ -348,7 +675,11 @@ def normalize_boundary_gaps(
     ].copy()
 
 
-def load_gap_events():
+def load_gap_events(
+    client,
+    table_id,
+    schema,
+):
     frames = []
 
     if INTERNAL_GAPS_CSV.exists():
@@ -365,7 +696,10 @@ def load_gap_events():
     if BOUNDARY_GAPS_CSV.exists():
         frames.append(
             normalize_boundary_gaps(
-                BOUNDARY_GAPS_CSV
+                BOUNDARY_GAPS_CSV,
+                client=client,
+                table_id=table_id,
+                schema=schema,
             )
         )
     else:
@@ -400,6 +734,27 @@ def load_gap_events():
         ]
     ).reset_index(
         drop=True
+    )
+
+    print(
+        "Gap catalog after timestamp normalization:"
+    )
+
+    source_counts = (
+        events["source"]
+        .value_counts()
+        .sort_index()
+    )
+
+    for source, count in source_counts.items():
+        print(
+            f"  {source:8s}: "
+            f"{count:,}"
+        )
+
+    print(
+        f"  total   : "
+        f"{len(events):,}"
     )
 
     events["gap_id"] = [
@@ -669,6 +1024,7 @@ def query_gap_batch(
     data["time_utc"] = pd.to_datetime(
         data["time_utc"],
         utc=True,
+        format="mixed",
         errors="coerce",
     )
 
@@ -1386,18 +1742,6 @@ def main():
         exist_ok=True,
     )
 
-    print()
-    print(
-        "Loading real MAG gaps..."
-    )
-
-    events = load_gap_events()
-
-    print(
-        f"Real gaps to classify: "
-        f"{len(events):,}"
-    )
-
     client = bigquery.Client()
 
     schema = discover_mag_schema(
@@ -1415,6 +1759,22 @@ def main():
             f"  {key:8s}: "
             f"{value}"
         )
+
+    print()
+    print(
+        "Loading real MAG gaps..."
+    )
+
+    events = load_gap_events(
+        client=client,
+        table_id=args.table,
+        schema=schema,
+    )
+
+    print(
+        f"Real gaps to classify: "
+        f"{len(events):,}"
+    )
 
     results = []
 
