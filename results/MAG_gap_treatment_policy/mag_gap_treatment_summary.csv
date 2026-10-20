@@ -1,0 +1,10 @@
+metric,value
+total_gaps,9055.0
+classified_ok,9055.0
+approved_for_interpolation,3379.0
+not_interpolated,5676.0
+approved_fraction,0.3731639977912755
+quiet_threshold,0.0471873
+intermediate_threshold,0.174766
+quiet_max_gap_s,5.0
+intermediate_max_gap_s,3.0

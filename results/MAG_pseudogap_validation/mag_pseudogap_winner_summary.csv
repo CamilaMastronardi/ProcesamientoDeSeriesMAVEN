@@ -1,0 +1,16 @@
+target_gap_duration_s,winner_method,wins,n_complete_trials,win_fraction
+2.0,ar,30,100,0.3
+2.0,linear,31,100,0.31
+2.0,spline,39,100,0.39
+3.0,ar,32,100,0.32
+3.0,linear,35,100,0.35
+3.0,spline,33,100,0.33
+5.0,ar,36,100,0.36
+5.0,linear,44,100,0.44
+5.0,spline,20,100,0.2
+10.0,ar,40,100,0.4
+10.0,linear,41,100,0.41
+10.0,spline,19,100,0.19
+30.0,ar,44,100,0.44
+30.0,linear,48,100,0.48
+30.0,spline,8,100,0.08
