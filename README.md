@@ -4,6 +4,12 @@ Análisis de series temporales de la misión **Mars Atmosphere and Volatile Evol
 
 El repositorio reúne procedimientos de control de calidad y preprocesamiento, análisis de cobertura espacial y correlaciones entre las mediciones del magnetómetro **MAG** y del analizador de electrones **SWEA**. El análisis de fronteras se concentra en el *bow shock* (**BS**) y la *magnetic pileup boundary* (**MPB**).
 
+## Notebook integrador
+
+El cuaderno **[00_Informe_integrador_MAVEN.ipynb](notebooks/00_Informe_integrador_MAVEN.ipynb)** reúne el trabajo completo hasta esta etapa: control de calidad de MAG, gaps y pseudogaps, política de interpolación y validación, SWEA, cobertura espacial y correlaciones MAG–SWEA para BS/MPB. Incluye los resultados numéricos ya archivados y celdas para visualizar los CSV y PNG existentes.
+
+**No ejecuta consultas de BigQuery automáticamente**: carga los resultados desde `results/` y avisa si falta algún archivo en la copia local. Para abrirlo, ejecutá `jupyter lab` desde la raíz del repositorio y seleccioná el notebook dentro de `notebooks/`.
+
 ## Organización
 
 | Directorio | Contenido |
