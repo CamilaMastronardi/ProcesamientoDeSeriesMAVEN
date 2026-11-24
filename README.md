@@ -239,6 +239,13 @@ python3 scripts/wavelets/05a_MPB_MAG_wavelet_10min.py \
 
 No es necesario BigQuery para esta etapa; sí se necesitan los **Parquet MAG locales**, los CSV de cruces y `PyWavelets` (ya incluido en `requirments.txt`).
 
+Verificar la implementación sobre una onda sintética de período conocido y un gap artificial:
+
+```bash
+python3 -m unittest discover -s tests -p "test_mpb_wavelet.py" -v
+```
+
+
 **Salidas:** `results/MAG_MPB_wavelets_10min/` contiene `mpb_wavelet_event_summary.csv`, `mpb_wavelet_period_by_event.csv`, `mpb_wavelet_mean_map.csv`, `analysis_config.json` y `figures/mpb_mean_wavelet_power.png` junto con ejemplos `figures/by_event/`. La columna `n_valid_events` permite conocer cuántos cruces contribuyen a cada celda del mapa promedio; `bs_within_window` advierte cuándo también se encuentra el BS clasificado dentro de la ventana MPB.
 
 El análisis de potencia wavelet es **exploratorio**: las transiciones de nivel del campo en la MPB pueden generar potencia amplia en escalas temporales sin que haya una onda física coherente. No se ha implementado un contraste de significancia frente a ruido rojo.
