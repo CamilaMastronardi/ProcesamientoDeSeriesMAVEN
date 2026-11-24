@@ -8,7 +8,7 @@ El repositorio reúne procedimientos de control de calidad y preprocesamiento, a
 
 El cuaderno **[00_Informe_integrador_MAVEN.ipynb](notebooks/00_Informe_integrador_MAVEN.ipynb)** reúne el trabajo completo hasta esta etapa: control de calidad de MAG, gaps y pseudogaps, política de interpolación y validación, SWEA, cobertura espacial y correlaciones MAG–SWEA para BS/MPB. Incluye los resultados numéricos ya archivados y celdas para visualizar los CSV y PNG existentes.
 
-**No ejecuta consultas de BigQuery automáticamente**: carga los resultados desde `results/` y avisa si falta algún archivo en la copia local. Para abrirlo, ejecutá `jupyter lab` desde la raíz del repositorio y seleccioná el notebook dentro de `notebooks/`.
+**No ejecuta consultas de BigQuery automáticamente**: carga los resultados desde `results/` y avisa si falta algún archivo en la copia local. También incluye el análisis wavelet y una demostración local de CWT para un único cruce MPB. Para abrirlo, ejecutá `jupyter lab` desde la raíz del repositorio y seleccioná el notebook dentro de `notebooks/`.
 
 ## Organización
 
@@ -18,6 +18,7 @@ El cuaderno **[00_Informe_integrador_MAVEN.ipynb](notebooks/00_Informe_integrado
 | `scripts/swea/` | Caracterización de la cadencia temporal de SWEA por energía. |
 | `scripts/positions/` | Cobertura espacial y orbital de MAVEN. |
 | `scripts/correlations/` | Correlaciones locales MAG–SWEA alrededor de cruces BS/MPB clasificados. |
+| `scripts/wavelets/` | CWT Morlet de MAG en ventanas de 10 minutos alrededor de cada MPB clasificada. |
 | `results/` | Tablas y figuras generadas por los análisis. |
 | `data/` | Datos de entrada y archivos Parquet procesados, disponibles localmente según el análisis. |
 
@@ -213,6 +214,35 @@ python3 scripts/correlations/04a_boundary_energy_correlation_maps.py \
 
 `--plots-only` no consulta BigQuery y usa la configuración guardada en `analysis_config.json`.
 
+### 5. Wavelets de MAG alrededor de la MPB (10 minutos)
+
+El script **[`05a_MPB_MAG_wavelet_10min.py`](scripts/wavelets/05a_MPB_MAG_wavelet_10min.py)** implementa una transformada wavelet continua (**CWT**) compleja Morlet sobre `|B|` (o `Bx`, `By`, `Bz`) alrededor de **cada cruce MPB clasificado manualmente**.
+
+Se utiliza una ventana **total de 10 minutos**, desde **5 minutos antes hasta 5 minutos después** de la MPB. La CWT se calcula por defecto con 48 períodos logarítmicos entre **4 y 120 s** sobre una grilla de 1 s. Se elimina una tendencia lineal por segmento y se normaliza la potencia por la varianza del residuo para comparar cruces.
+
+**Control de gaps y bordes:** el script toma los archivos MAG Parquet ya tratados, separa los tramos con discontinuidades mayores a 1,5 s, interpola solo dentro de tramos continuos y aplica una máscara aproximada del **cono de influencia (COI)** a cada segmento. No interpola gaps rechazados. Las muestras MAG previamente reconstruidas pueden excluirse con `--exclude-interpolated`.
+
+Prueba limitada, con resultados en una subcarpeta independiente:
+
+```bash
+python3 scripts/wavelets/05a_MPB_MAG_wavelet_10min.py \
+  --events data/classified_crossings/ \
+  --max-events 5 --run-name prueba_5_mpb --max-plots 5
+```
+
+Análisis completo, con una selección de 12 escalogramas individuales:
+
+```bash
+python3 scripts/wavelets/05a_MPB_MAG_wavelet_10min.py \
+  --events data/classified_crossings/ --max-plots 12
+```
+
+No es necesario BigQuery para esta etapa; sí se necesitan los **Parquet MAG locales**, los CSV de cruces y `PyWavelets` (ya incluido en `requirments.txt`).
+
+**Salidas:** `results/MAG_MPB_wavelets_10min/` contiene `mpb_wavelet_event_summary.csv`, `mpb_wavelet_period_by_event.csv`, `mpb_wavelet_mean_map.csv`, `analysis_config.json` y `figures/mpb_mean_wavelet_power.png` junto con ejemplos `figures/by_event/`. La columna `n_valid_events` permite conocer cuántos cruces contribuyen a cada celda del mapa promedio; `bs_within_window` advierte cuándo también se encuentra el BS clasificado dentro de la ventana MPB.
+
+El análisis de potencia wavelet es **exploratorio**: las transiciones de nivel del campo en la MPB pueden generar potencia amplia en escalas temporales sin que haya una onda física coherente. No se ha implementado un contraste de significancia frente a ruido rojo.
+
 ## Consideraciones metodológicas
 
 - **Una correlación no demuestra causalidad.** Los cambios simultáneos del campo y del flujo pueden estar dominados por la transición entre regiones y no necesariamente por fluctuaciones acopladas.
@@ -223,4 +253,4 @@ python3 scripts/correlations/04a_boundary_energy_correlation_maps.py \
 
 ## Estado y próximas extensiones
 
-El repositorio documenta las herramientas disponibles para preparar, caracterizar y comparar series temporales de MAVEN. Entre las extensiones posibles para el trabajo final se encuentran el análisis de autocorrelación, la densidad espectral de potencia (Welch), STFT y wavelets, y la correlación cruzada MAG–SWEA con retardos temporales. **Estas técnicas se proponen como trabajo futuro; no forman parte todavía de los scripts de este repositorio.**
+El repositorio documenta las herramientas disponibles para preparar, caracterizar y comparar series temporales de MAVEN. El análisis CWT Morlet de MAG cerca de la MPB ya está implementado. Como próximas extensiones quedan el análisis de autocorrelación, la densidad espectral de potencia (Welch), STFT, la comparación de escalas entre MAG y SWEA y la correlación cruzada con retardos temporales. Estas extensiones todavía no están implementadas en el repositorio.
