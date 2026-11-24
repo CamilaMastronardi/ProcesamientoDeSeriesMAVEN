@@ -20,7 +20,9 @@ statsmodels
 google-cloud-bigquery
 google-cloud-bigquery-storage
 db-dtypes
-pyarrow
+# Parquet reader for pandas: Python 3.8 needs a compatible PyArrow release
+pyarrow<18; python_version < "3.9"
+pyarrow; python_version >= "3.9"
 
 # Utilities
 tqdm
