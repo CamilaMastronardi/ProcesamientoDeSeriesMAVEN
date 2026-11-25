@@ -226,9 +226,16 @@ def extract_generic_records(path, raw, args):
     group = safe_name(path.stem)
     records=[]
     for ix,row in raw.iterrows():
-        case_id = row[case_col].strip() if case_col and row[case_col].strip() else f'{group}_row{ix+2:04d}'
-        meta={'group':group,'source_file':path.name,'source_row':ix+2,
-              'theta_bn_deg':np.nan,'beta_proton':np.nan,'pdyn_proton':np.nan}
+        row_group = row.get('group', '').strip() or group
+        case_id = row[case_col].strip() if case_col and row[case_col].strip() else f'{row_group}_row{ix+2:04d}'
+        source_row_raw = row.get('source_row', '').strip()
+        source_row = int(source_row_raw) if source_row_raw.isdigit() else ix+2
+        meta={'group':row_group,
+              'source_file':row.get('source_file', '').strip() or path.name,
+              'source_row':source_row,
+              'theta_bn_deg':pd.to_numeric(row.get('theta_bn_deg', ''),errors='coerce'),
+              'beta_proton':pd.to_numeric(row.get('beta_proton', ''),errors='coerce'),
+              'pdyn_proton':pd.to_numeric(row.get('pdyn_proton', ''),errors='coerce')}
         if type_col and time_col:
             typ=str(row[type_col]).strip()
             tim=str(row[time_col]).strip()
