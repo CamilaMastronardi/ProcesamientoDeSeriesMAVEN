@@ -90,7 +90,7 @@ El script utiliza los **cruces identificados y clasificados manualmente** en los
 
 #### Datos necesarios
 
-**Catálogo de cruces:** colocar los cuatro archivos `MAVEN_MPB_Data_Group*.csv` en `data/classified_crossings/`. También se admiten catálogos personalizados con una fila por evento o con tiempos BS/MPB en columnas separadas. Se preservan las fechas del catálogo y se registran advertencias sobre inconsistencias o duplicados.
+**Catálogo de cruces:** ya se incluye en el repositorio [`data/classified_crossings/crossings_catalog_normalized_4groups.csv`](data/classified_crossings/crossings_catalog_normalized_4groups.csv), con **569 casos** de los cuatro grupos manualmente clasificados (G1–G4) y las fechas BS/MPB en UTC. También se pueden utilizar los cuatro CSV originales `MAVEN_MPB_Data_Group*.csv` o catálogos personalizados en formatos long/wide. Se preservan las fechas y la procedencia del catálogo, y se registran advertencias sobre inconsistencias o duplicados. **Para evitar duplicar eventos, no mezclar el catálogo normalizado y los cuatro originales en un mismo análisis.**
 
 **MAG:** archivos Parquet locales tratados, en `data/processed/MAG_gap_treated/`.
 
@@ -237,7 +237,7 @@ python3 scripts/wavelets/05a_MPB_MAG_wavelet_10min.py \
   --events data/classified_crossings/ --max-plots 12
 ```
 
-No es necesario BigQuery para esta etapa; sí se necesitan los **Parquet MAG locales**, los CSV de cruces y `PyWavelets` (ya incluido en `requirments.txt`).
+No es necesario BigQuery para esta etapa; sí se necesitan los **Parquet MAG locales**, el CSV de cruces (incluido en GitHub) y `PyWavelets` (ya incluido en `requirments.txt`).
 
 Verificar la implementación sobre una onda sintética de período conocido y un gap artificial:
 
