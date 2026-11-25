@@ -72,7 +72,8 @@ def load_mpb_catalog(location):
         if not original and not long and "mpb_datetime_utc" not in raw.columns:
             raise ValueError("Catálogo no reconocido: {}".format(file))
         for i, row in raw.iterrows():
-            case_id = row.get("case_id", "").strip() or "{}_row{:04d}".format(group, i + 2)
+            row_group = row.get("group", "").strip() or group
+            case_id = row.get("case_id", "").strip() or "{}_row{:04d}".format(row_group, i + 2)
             bs_value = ""
             if original:
                 day = row["yyyy-mm-dd"].strip()
@@ -97,8 +98,11 @@ def load_mpb_catalog(location):
             if pd.isna(t):
                 raise ValueError("Hora MPB inválida: {} línea {}".format(file, i + 2))
             bs = pd.to_datetime(bs_value, errors="coerce", utc=True) if bs_value else pd.NaT
-            records.append(dict(case_id=case_id, group=group, mpb_utc=t,
-                                bs_utc=bs, source_file=file.name, source_row=i + 2))
+            source_file = row.get("source_file", "").strip() or file.name
+            source_row_raw = row.get("source_row", "").strip()
+            source_row = int(source_row_raw) if source_row_raw.isdigit() else i + 2
+            records.append(dict(case_id=case_id, group=row_group, mpb_utc=t,
+                                bs_utc=bs, source_file=source_file, source_row=source_row))
     if not records:
         raise ValueError("El catálogo no contiene eventos MPB")
     events = pd.DataFrame(records).sort_values(["mpb_utc", "case_id"])
