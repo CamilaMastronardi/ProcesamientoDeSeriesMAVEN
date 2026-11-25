@@ -348,6 +348,8 @@ def main():
             )
         grouped_df = load_grouped_csv(csv_path)
         year_month_mats = matrices_from_grouped(grouped_df)
+        # El CSV de resúmenes se puede regenerar localmente sin BigQuery.
+        save_year_summary(year_month_mats, args.output_dir)
         make_monthly_figures(args.output_dir, year_month_mats)
         print("=" * 78)
         print("MAVEN — FRONTAL MONTHLY COVERAGE FIGURES REGENERATED")
