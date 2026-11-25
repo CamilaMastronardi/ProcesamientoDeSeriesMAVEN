@@ -916,6 +916,87 @@ def summarize_per_boundary(per_event):
     return out
 
 
+
+def rebuild_summaries_from_event_csv(out, chunksize=50000):
+    """Reconstruir resúmenes a partir del CSV individual, sin BigQuery.
+
+    Lee en chunks (el CSV puede tener millones de filas) y deduplica cruces
+    con igual tipo de frontera y timestamp; conserva todos los 64 canales
+    y las ventanas aunque algunas correlaciones sean NaN.
+    """
+    file = out / 'correlations_by_event.csv'
+    grid = out / 'energy_grid.csv'
+    config_file = out / 'analysis_config.json'
+    if not all(p.is_file() for p in (file, grid, config_file)):
+        raise FileNotFoundError(
+            'Para reconstruir resúmenes localmente se necesitan '
+            'correlations_by_event.csv, energy_grid.csv y analysis_config.json '
+            'en {}'.format(out))
+    config = json.loads(config_file.read_text(encoding='utf-8'))
+    ws = np.asarray(config['windows_min'], dtype=float)
+    fields = list(config['fields'])
+    energies = (pd.read_csv(grid).sort_values('energy_index')
+                ['energy_ev'].to_numpy(dtype=float))
+    if len(energies) != 64:
+        raise ValueError('Se esperaban los 64 canales de SWEA en energy_grid.csv')
+
+    # Se usan los agregadores del pipeline original para preservar
+    # las mismas definiciones de promedio, mediana y n_valid_events.
+    totals = defaultdict(lambda: [0, 0.0, []])
+    groups = defaultdict(lambda: [0, 0.0, []])
+    seen_boundary = set()
+    selected = None
+    reader = pd.read_csv(file, chunksize=chunksize, dtype={'event_id': str})
+    needed = {'event_id', 'event_type', 'event_time_utc', 'field',
+              'window_minutes', 'energy_index', 'pearson_r'}
+    last_event_id = None
+    skip_event = False
+    processed = 0
+    for chunk in reader:
+        missing = needed - set(chunk.columns)
+        if missing:
+            raise ValueError('Faltan columnas en correlations_by_event.csv: {}'.format(missing))
+        if 'group' not in chunk.columns:
+            chunk['group'] = 'sin_grupo'
+        for row in chunk.itertuples(index=False):
+            if row.event_id != last_event_id:
+                last_event_id = row.event_id
+                bkey = (str(row.event_type), str(row.event_time_utc))
+                skip_event = bkey in seen_boundary
+                seen_boundary.add(bkey)
+            if skip_event:
+                continue
+            etype = str(row.event_type)
+            field = str(row.field)
+            w = float(row.window_minutes)
+            j = int(row.energy_index)
+            if not 0 <= j < 64:
+                raise ValueError('Índice energético fuera de rango: {}'.format(j))
+            group = str(row.group)
+            key = (etype, field, w, j)
+            group_key = (group,) + key
+            for store, identifier in ((totals, key), (groups, group_key)):
+                slot = store[identifier]
+                slot[0] += 1
+                if pd.notna(row.pearson_r):
+                    rv = float(row.pearson_r)
+                    if np.isfinite(rv):
+                        slot[1] += rv
+                        slot[2].append(rv)
+            processed += 1
+
+    if not processed:
+        raise ValueError('CSV de correlaciones por evento sin filas utilizables')
+    summary = StreamingSummaries.to_frame(totals, energies)
+    grouped = StreamingSummaries.to_frame(groups, energies, with_group=True)
+    summary.to_csv(out / 'correlations_by_boundary_summary.csv', index=False)
+    grouped.to_csv(out / 'correlations_by_group_summary.csv', index=False)
+    plot_summaries_only(out, energies, ws, fields)
+    print('Resumen reconstruido solo desde CSV local:', out, flush=True)
+    print('Cruces (tipo, timestamp) únicos:', len(seen_boundary), flush=True)
+    return summary, grouped
+
+
 def main():
     ap=argparse.ArgumentParser(description='Mapa energia × ancho de ventana para correlacion SWEA-MAG en BS y MPB')
     ap.add_argument('--events',nargs='+',type=Path,required=True,
@@ -946,6 +1027,8 @@ def main():
     ap.add_argument('--diagnose-mag',action='store_true',help='Auditar cobertura temporal MAG y cache SWEA sin BigQuery')
     ap.add_argument('--plot-per-event',action='store_true',help='Generar además un PNG por cada cruce (muchos gráficos)')
     ap.add_argument('--plots-only',action='store_true')
+    ap.add_argument('--rebuild-from-event',action='store_true',
+                    help='Regenerar resumen y mapas desde correlations_by_event.csv sin BigQuery')
     ap.add_argument('--overwrite',action='store_true')
     args=ap.parse_args()
     if args.min_pairs<3: ap.error('--min-pairs debe ser >=3')
@@ -955,6 +1038,9 @@ def main():
     fields=list(dict.fromkeys(args.fields))
     run=safe_name(args.run_name or ('MAVEN_MPB_4groups' if len(args.events)>1 or args.events[0].is_dir() else args.events[0].stem))
     out=args.output_root/run
+    if args.rebuild_from_event:
+        rebuild_summaries_from_event_csv(out)
+        return
     if args.plots_only:
         energy=pd.read_csv(out/'energy_grid.csv').sort_values('energy_index')['energy_ev'].to_numpy()
         config=json.loads((out/'analysis_config.json').read_text())
