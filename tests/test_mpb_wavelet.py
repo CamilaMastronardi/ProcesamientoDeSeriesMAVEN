@@ -50,6 +50,34 @@ class TestMpbWavelet(unittest.TestCase):
         self.assertEqual(stats["n_contiguous_segments"], 2)
         self.assertLess(stats["fraction_window_covered"], 1.)
 
+    def test_before_after_ratio_excludes_crossing_instant(self):
+        # Dos tiempos válidos por lado. La muestra central no debe entrar.
+        t = np.array([-2., -1., 0., 1., 2.])
+        power = np.array([
+            [2., 2., 999., 8., 8.],
+            [np.nan, 2., 999., 8., np.nan],
+        ])
+        before, after, n_before, n_after, delta = (
+            wavelets.paired_power_by_period(power, t, min_side_points=2)
+        )
+        self.assertEqual(n_before.tolist(), [2, 1])
+        self.assertEqual(n_after.tolist(), [2, 1])
+        self.assertAlmostEqual(before[0], 2.)
+        self.assertAlmostEqual(after[0], 8.)
+        self.assertAlmostEqual(delta[0], np.log10(4.))
+        self.assertTrue(np.isnan(delta[1]))
+
+    def test_pair_with_no_overlap_with_coi(self):
+        # Una fila sin ningún tiempo válido después de la frontera.
+        t = np.array([-2., -1., 0., 1., 2.])
+        p = np.array([[2., 2., np.nan, np.nan, np.nan]])
+        before, after, n_before, n_after, delta = (
+            wavelets.paired_power_by_period(p, t, min_side_points=2)
+        )
+        self.assertEqual(n_before[0], 2)
+        self.assertEqual(n_after[0], 0)
+        self.assertTrue(np.isnan(delta[0]))
+
     def test_catalog_preserves_manual_mpb(self):
         with tempfile.TemporaryDirectory() as directory:
             file = Path(directory) / "MAVEN_MPB_Data_Group1.csv"
