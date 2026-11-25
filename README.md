@@ -8,7 +8,7 @@ El repositorio reúne procedimientos de control de calidad y preprocesamiento, a
 
 El cuaderno **[00_Informe_integrador_MAVEN.ipynb](notebooks/00_Informe_integrador_MAVEN.ipynb)** reúne el trabajo completo hasta esta etapa: control de calidad de MAG, gaps y pseudogaps, política de interpolación y validación, SWEA, cobertura espacial y correlaciones MAG–SWEA para BS/MPB. Incluye los resultados numéricos ya archivados y celdas para visualizar los CSV y PNG existentes.
 
-**No ejecuta consultas de BigQuery automáticamente**: carga los resultados desde `results/` y avisa si falta algún archivo en la copia local. También incluye el análisis wavelet y una demostración local de CWT para un único cruce MPB. Para abrirlo, ejecutá `jupyter lab` desde la raíz del repositorio y seleccioná el notebook dentro de `notebooks/`.
+**No ejecuta consultas de BigQuery automáticamente**: carga los resultados desde `results/`. En su sección **8.1.a**, si falta la nueva tabla pareada wavelet, ejecuta **localmente** el script CWT para los cruces MPB usando los Parquet MAG y luego reutiliza esos archivos en las ejecuciones siguientes. La opción `EJECUTAR_WAVELETS = "nunca"` desactiva este recálculo. Al finalizar se muestran las comparaciones antes/después, la cobertura temporal y un ZIP preparado para compartir. Para abrirlo, ejecutá `jupyter lab` desde la raíz del repositorio y seleccioná el notebook dentro de `notebooks/`.
 
 ## Organización
 
@@ -246,7 +246,7 @@ python3 -m unittest discover -s tests -p "test_mpb_wavelet.py" -v
 ```
 
 
-**Salidas:** `results/MAG_MPB_wavelets_10min/` contiene `mpb_wavelet_event_summary.csv`, `mpb_wavelet_period_by_event.csv`, `mpb_wavelet_mean_map.csv`, `analysis_config.json` y `figures/mpb_mean_wavelet_power.png` junto con ejemplos `figures/by_event/`. La columna `n_valid_events` permite conocer cuántos cruces contribuyen a cada celda del mapa promedio; `bs_within_window` advierte cuándo también se encuentra el BS clasificado dentro de la ventana MPB.
+**Salidas:** `results/MAG_MPB_wavelets_10min/` contiene `mpb_wavelet_event_summary.csv`, `mpb_wavelet_period_by_event.csv`, **`mpb_wavelet_before_after_by_event.csv`** (comparación pareada por período, mínimo 20 tiempos válidos por lado), `mpb_wavelet_mean_map.csv`, `analysis_config.json` y `figures/mpb_mean_wavelet_power.png` junto con ejemplos `figures/by_event/`. Al ejecutar todas las celdas del notebook se crea también `results/MAG_MPB_wavelets_10min/informe_notebook/` con tablas y figuras de cobertura, comparación pareada por período, bandas 4–12/12–30/30–60/60–120 s y sensibilidad a BS, además de **`MPB_wavelets_resultados_para_compartir.zip`** (figuras y CSV, sin Parquet MAG). La columna `n_valid_events` permite conocer cuántos cruces contribuyen a cada celda del mapa promedio; `bs_within_window` advierte cuándo también se encuentra el BS clasificado dentro de la ventana MPB.
 
 El análisis de potencia wavelet es **exploratorio**: las transiciones de nivel del campo en la MPB pueden generar potencia amplia en escalas temporales sin que haya una onda física coherente. No se ha implementado un contraste de significancia frente a ruido rojo.
 
