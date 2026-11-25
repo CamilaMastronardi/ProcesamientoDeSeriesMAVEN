@@ -61,6 +61,7 @@ import argparse
 from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -1225,7 +1226,8 @@ def main() -> None:
     )
 
     print()
-    print("Processing SWEA flux validity by date chunk...")
+    print("Processing SWEA flux validity by date chunk...", flush=True)
+    started_chunks = time.monotonic()
 
     while current <= end_date:
         chunk_number += 1
@@ -1240,7 +1242,7 @@ def main() -> None:
 
         print(
             f"  Chunk {chunk_number}/{total_chunks}: "
-            f"{current} -> {chunk_end}"
+            f"{current} -> {chunk_end}", flush=True
         )
 
         frame = query_validity_chunk(
@@ -1252,11 +1254,24 @@ def main() -> None:
         )
 
         print(
-            f"    SWEA records: {len(frame):,}"
+            f"    SWEA records: {len(frame):,}", flush=True
         )
 
         accumulator.update(
             frame
+        )
+
+        elapsed = time.monotonic() - started_chunks
+        remaining_chunks = max(0, total_chunks - chunk_number)
+        estimated_seconds = (elapsed / chunk_number) * remaining_chunks
+        fraction = 100.0 * chunk_number / max(1, total_chunks)
+        print(
+            "    Progreso: {:.1f}% ({}/{}) | "
+            "Tiempo transcurrido: {:.1f} min | "
+            "Restante estimado: {:.1f} min".format(
+                fraction, chunk_number, total_chunks,
+                elapsed / 60.0, estimated_seconds / 60.0),
+            flush=True,
         )
 
         current = (
