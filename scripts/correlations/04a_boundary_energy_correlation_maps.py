@@ -658,8 +658,9 @@ def plot_map(grid, energies, windows, title, filename, kind='r'):
         cmapname='viridis'
         norm=None
         colorbar_label='Cantidad de cruces con correlacion definida'
-    # 64 valores explicitos en X. Una figura amplia permite leer cada energia
-    # sin omitir canales, en lugar de depender del localizador log automatico.
+    # Únicamente en el mapa de Pearson promedio BS |B| se despeja la grilla:
+    # se conservan los 64 bins, pero se rotulan menos centros energéticos.
+    legible_bs = filename.name == 'BS_b_total_nt_mean_r.png'
     fig,ax=plt.subplots(figsize=(25.5,11.2 if len(windows)>28 else 8.7))
     cm=copy.copy(plt.get_cmap(cmapname))
     cm.set_bad('#d8d8d8')
@@ -667,23 +668,39 @@ def plot_map(grid, energies, windows, title, filename, kind='r'):
     mesh=ax.pcolormesh(
         channel_edges(energies),window_edges(windows),data,
         cmap=cm,norm=norm,shading='flat',
-        edgecolors=(0,0,0,0.24), linewidths=0.24,
+        edgecolors=(0,0,0,0.06) if legible_bs else (0,0,0,0.24),
+        linewidths=0.08 if legible_bs else 0.24,
         antialiased=False,
     )
     ax.set_xscale('log')
-    # Mostrar explícitamente el valor energético de cada canal (no el índice).
-    # Los 64 ticks coinciden con los centros físicos de los 64 rectángulos.
+    # Las 64 energías siguen presentes en la matriz; sólo se reducen
+    # las etiquetas para que no se superpongan en el mapa solicitado.
     from matplotlib.ticker import FixedLocator, NullLocator
     sorted_energies = np.sort(energies)
-    ax.xaxis.set_major_locator(FixedLocator(sorted_energies))
+    if legible_bs:
+        indices_rotulados = np.unique(np.r_[np.arange(0, len(sorted_energies), 4),
+                                            len(sorted_energies)-1])
+        energias_rotuladas = sorted_energies[indices_rotulados]
+        ax.xaxis.set_major_locator(FixedLocator(energias_rotuladas))
+        ax.set_xticklabels([f'{e:.5g}' for e in energias_rotuladas],
+                           rotation=60, ha='right', va='top', fontsize=9)
+    else:
+        ax.xaxis.set_major_locator(FixedLocator(sorted_energies))
+        ax.set_xticklabels([f'{e:.5g}' for e in sorted_energies],
+                           rotation=90, ha='center', va='top', fontsize=7.4)
     ax.xaxis.set_minor_locator(NullLocator())
-    ax.set_xticklabels([f'{e:.5g}' for e in sorted_energies],
-                       rotation=90, ha='center', va='top', fontsize=7.4)
     ax.tick_params(axis='x', which='major', length=3.5, pad=3)
     ax.set_xlim(channel_edges(energies)[[0, -1]])
     # Rotular las 59 ventanas completas volvería ilegible el eje Y.
     # Se dibujan TODOS los bins, pero solo se rotulan las escalas principales.
-    if len(windows) > 28:
+    if legible_bs:
+        ticks = [float(w) for w in windows
+                 if np.isclose(w % 5.0, 0.0, atol=1e-7)]
+        if not ticks or not np.isclose(ticks[0], windows[0]):
+            ticks.insert(0, float(windows[0]))
+        if not np.isclose(ticks[-1], windows[-1]):
+            ticks.append(float(windows[-1]))
+    elif len(windows) > 28:
         ticks = [float(w) for w in windows if np.isclose(w % 2.0, 0.0, atol=1e-7)]
         if not np.isclose(ticks[0] if ticks else np.nan, windows[0]):
             ticks.insert(0, float(windows[0]))
@@ -697,7 +714,11 @@ def plot_map(grid, energies, windows, title, filename, kind='r'):
     ax.set_xlabel('Energia del canal SWEA [eV] — 64 valores (escala logaritmica)',labelpad=8)
     ax.set_title(title)
     fig.colorbar(mesh,ax=ax,label=colorbar_label,pad=0.015,aspect=30)
-    ax.grid(False)
+    if legible_bs:
+        ax.grid(True, which='major', axis='both', color='black',
+                alpha=0.12, linewidth=0.5)
+    else:
+        ax.grid(False)
     fig.subplots_adjust(bottom=0.23,top=0.88,right=0.88,left=0.065)
     filename.parent.mkdir(parents=True,exist_ok=True)
     fig.savefig(filename,dpi=210)
