@@ -1223,12 +1223,22 @@ def main():
             f"{chunk_dates[-1]}"
         )
 
-        raw = query_raw_dates(
-            client=client,
-            table_id=args.table,
-            schema=schema,
-            dates=chunk_dates,
-        )
+        # Evitar releer BigQuery cuando los Parquet diarios ya existen.
+        # Con --overwrite sí se vuelve a consultar y escribir cada día.
+        pending_dates = [
+            d for d in chunk_dates
+            if args.overwrite or not daily_output_path(d).exists()
+        ]
+        if pending_dates:
+            raw = query_raw_dates(
+                client=client,
+                table_id=args.table,
+                schema=schema,
+                dates=pending_dates,
+            )
+        else:
+            raw = pd.DataFrame()
+            print("  Todos los Parquet del chunk existen: sin lectura MAG de BigQuery")
 
         for date_value in chunk_dates:
             output_path = daily_output_path(
