@@ -235,6 +235,34 @@ def cwt_event(mag, event_time, field, relative_seconds, periods,
     return values, normalized, mean_by_period, count, stats
 
 
+def paired_power_by_period(power, relative_seconds, min_side_points=20):
+    """Potencia normalizada media por período y por lado, para el mismo evento.
+
+    Evita el punto central t=0 y descarta un período si cualquiera de los dos
+    lados no tiene al menos min_side_points tiempos fuera del COI y gaps.
+    La diferencia logarítmica es log10(P_despues/P_antes), no un test.
+    """
+    before = np.asarray(relative_seconds, dtype=float) < 0
+    after = np.asarray(relative_seconds, dtype=float) > 0
+    if power.ndim != 2 or power.shape[1] != len(relative_seconds):
+        raise ValueError("Las dimensiones de potencia y tiempo no coinciden")
+    vals = []
+    for mask in (before, after):
+        region = power[:, mask]
+        n = np.isfinite(region).sum(axis=1)
+        sums = np.nansum(region, axis=1)
+        avg = np.divide(sums, n, out=np.full(len(n), np.nan),
+                        where=n >= min_side_points)
+        vals.append((avg, n))
+    before_avg, before_n = vals[0]
+    after_avg, after_n = vals[1]
+    valid = (np.isfinite(before_avg) & (before_avg > 0) &
+             np.isfinite(after_avg) & (after_avg > 0))
+    delta = np.full(len(before_avg), np.nan)
+    delta[valid] = np.log10(after_avg[valid] / before_avg[valid])
+    return before_avg, after_avg, before_n, after_n, delta
+
+
 def plot_map(times_min, periods, values, title, filename, signal=None,
              label="log10 potencia normalizada"):
     from matplotlib.colors import Normalize
@@ -303,11 +331,15 @@ def main():
     p.add_argument("--max-events", type=int, default=None)
     p.add_argument("--max-plots", type=int, default=12,
                    help="Cantidad máxima de escalogramas individuales (0 = ninguno)")
+    p.add_argument("--min-side-points", type=int, default=20,
+                   help="Mínimo de tiempos CWT válidos por lado y por período (default: 20)")
     args = p.parse_args()
     if args.window_min <= 0 or args.cadence_s <= 0 or args.max_gap_s <= 0:
         p.error("Las duraciones y la cadencia deben ser positivas")
     if args.n_periods < 3 or args.max_plots < 0:
         p.error("--n-periods debe ser >=3 y --max-plots >=0")
+    if args.min_side_points < 1:
+        p.error("--min-side-points debe ser >=1")
     if args.max_events is not None and args.max_events < 1:
         p.error("--max-events debe ser >=1")
     nyquist_period = 2.0 * args.cadence_s
@@ -335,6 +367,7 @@ def main():
     counts = np.zeros_like(accumulated, dtype=int)
     summary = []
     by_period = []
+    paired_by_period = []
 
     @lru_cache(maxsize=4)
     def day_cache(date_str):
@@ -364,10 +397,18 @@ def main():
             accumulated[mask] += power[mask]
             counts[mask] += 1
             summary.append(dict(**common, **result))
-            for period, avg, nvalid in zip(periods, avg_by_period, valid_by_period):
+            before, after, n_before, n_after, delta = paired_power_by_period(
+                power, times_s, min_side_points=args.min_side_points)
+            for j, (period, avg, nvalid) in enumerate(zip(periods, avg_by_period, valid_by_period)):
                 by_period.append(dict(**common, period_s=float(period),
                                       mean_normalized_power=float(avg) if np.isfinite(avg) else np.nan,
                                       n_valid_times=int(nvalid)))
+                paired_by_period.append(dict(
+                    **common, period_s=float(period),
+                    power_before=float(before[j]) if np.isfinite(before[j]) else np.nan,
+                    power_after=float(after[j]) if np.isfinite(after[j]) else np.nan,
+                    n_valid_before=int(n_before[j]), n_valid_after=int(n_after[j]),
+                    log10_after_over_before=float(delta[j]) if np.isfinite(delta[j]) else np.nan))
             if i in plot_indices:
                 plot_map(times_min, periods, power,
                          "MPB | {} | {}".format(args.field, event.mpb_utc),
@@ -380,6 +421,8 @@ def main():
 
     pd.DataFrame(summary).to_csv(root / "mpb_wavelet_event_summary.csv", index=False)
     pd.DataFrame(by_period).to_csv(root / "mpb_wavelet_period_by_event.csv", index=False)
+    pd.DataFrame(paired_by_period).to_csv(
+        root / "mpb_wavelet_before_after_by_event.csv", index=False)
     mean = np.divide(accumulated, counts,
                      out=np.full_like(accumulated, np.nan),
                      where=counts > 0)
@@ -399,6 +442,7 @@ def main():
                        min_segment_s=args.min_segment_s, periods_s=periods.tolist(),
                        wavelet=WAVELET, detrend=args.detrend,
                        exclude_interpolated=args.exclude_interpolated,
+                       min_side_points=args.min_side_points,
                        n_selected_events=len(events), n_individual_figures=len(plot_indices)),
                   f, indent=2)
     print("Resultados guardados en:", root)
